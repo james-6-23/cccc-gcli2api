@@ -11,6 +11,8 @@ from config import get_calls_per_rotation, is_mongodb_mode
 from log import log
 from .storage_adapter import get_storage_adapter
 from .google_oauth_api import fetch_user_email_from_file, Credentials
+from google.auth.exceptions import RefreshError
+import re
 from .task_manager import task_manager
 
 
@@ -271,12 +273,9 @@ class CredentialManager:
 
                     log.info(f"选择凭证 {credential_name} (索引 {current_index})。")
                     return credential_name, credential_data, current_index
-                else: # 加载失败意味着token刷新失败或文件有问题
-                    log.warning(f"加载凭证 {credential_name} 失败，将禁用该凭证。")
-                    await self.set_cred_disabled(credential_name, True)
-                    # 更新本地状态副本以避免在此次调用中再次尝试
-                    all_states[credential_name] = all_states.get(credential_name, {})
-                    all_states[credential_name]['disabled'] = True
+                else:
+                    # 加载失败，记录日志，但不再从此函数禁用
+                    log.warning(f"加载凭证 {credential_name} 失败（可能由于刷新失败），跳过此凭证。")
 
             log.error("所有凭证均尝试失败，无可用凭证。")
             return None
@@ -417,7 +416,14 @@ class CredentialManager:
                     error_codes = current_state.get("error_codes", [])
                     if error_code not in error_codes:
                         error_codes.append(error_code)
-                    state_updates["error_codes"] = error_codes[-10:] # 保留最近10个
+                    state_updates["error_codes"] = error_codes[-10:]  # 保留最近10个
+
+                    # 永久性错误（如400, 403），则永久禁用
+                    permanent_error_codes = [400, 401, 403]
+                    if error_code in permanent_error_codes:
+                        state_updates["disabled"] = True
+                        state_updates["temp_disabled_until"] = None  # 确保不是临时禁用
+                        log.warning(f"凭证 {credential_name} 因永久性错误代码 {error_code} 被禁用。")
 
                 if state_updates:
                     await self.update_credential_state(credential_name, state_updates)
@@ -521,18 +527,24 @@ class CredentialManager:
             
             return credential_data
             
-        except Exception as e:
+        except RefreshError as e:
             error_msg = str(e)
             log.error(f"Token刷新失败 {filename}: {error_msg}")
-            
-            # 检查是否是凭证永久失效的错误
-            is_permanent_failure = self._is_permanent_refresh_failure(error_msg)
-            
-            if is_permanent_failure:
-                log.warning(f"检测到凭证永久失效: {filename}")
-                # 记录失效状态，但不在这里禁用凭证，让上层调用者处理
-                await self.record_api_call_result(filename, False, 400)
-            
+
+            # 尝试从错误消息中提取HTTP状态码
+            status_code_match = re.search(r'(\d{3})', error_msg)
+            error_code = int(status_code_match.group(1)) if status_code_match else 400
+
+            # 统一调用记录函数，由它决定禁用策略
+            await self.record_api_call_result(filename, False, error_code)
+
+            return None
+
+        except Exception as e:
+            error_msg = str(e)
+            log.error(f"Token刷新时发生未知错误 {filename}: {error_msg}")
+            # 对于未知错误，也记录为通用失败
+            await self.record_api_call_result(filename, False, 400)
             return None
     
     def _is_permanent_refresh_failure(self, error_msg: str) -> bool:

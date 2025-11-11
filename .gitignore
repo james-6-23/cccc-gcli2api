@@ -85,3 +85,4 @@ Thumbs.db
 *.log
 log.txt
 *.txt
+!requirements.txt

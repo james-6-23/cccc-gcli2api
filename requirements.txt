@@ -1,0 +1,15 @@
+fastapi
+httpx[socks]
+pydantic
+python-dotenv
+hypercorn
+aiofiles
+python-multipart
+toml
+PyJWT
+oauthlib
+motor
+redis
+asyncpg
+pypinyin
+google-auth
