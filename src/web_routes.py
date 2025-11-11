@@ -782,10 +782,11 @@ async def creds_action(request: CredFileActionRequest, token: str = Depends(veri
         
         elif action == "delete":
             try:
-                # 使用存储适配器删除凭证
-                success = await storage_adapter.delete_credential(filename)
-                if success:
-                    log.info(f"Successfully deleted credential: {filename}")
+                # 在FileStorageManager中，delete_credential会删除整个部分，同时包括内容和状态
+                deleted = await storage_adapter.delete_credential(filename)
+
+                if deleted:
+                    log.info(f"Successfully deleted credential (content and state): {filename}")
                     return JSONResponse(content={"message": f"已删除凭证文件 {os.path.basename(filename)}"})
                 else:
                     raise HTTPException(status_code=500, detail="删除凭证失败")
@@ -847,11 +848,12 @@ async def creds_batch_action(request: CredFileBatchActionRequest, token: str = D
                     
                 elif action == "delete":
                     try:
-                        # 使用存储适配器删除凭证
-                        delete_success = await storage_adapter.delete_credential(filename)
-                        if delete_success:
+                        # 在FileStorageManager中，delete_credential会删除整个部分，同时包括内容和状态
+                        deleted = await storage_adapter.delete_credential(filename)
+
+                        if deleted:
                             success_count += 1
-                            log.info(f"Successfully deleted credential in batch: {filename}")
+                            log.info(f"Successfully deleted credential (content & state) in batch: {filename}")
                         else:
                             errors.append(f"{filename}: 删除失败")
                             continue

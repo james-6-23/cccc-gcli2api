@@ -139,6 +139,37 @@ class CredentialManager:
             all_credentials_from_storage = await self._storage_adapter.list_credentials()
             all_states = await self._storage_adapter.get_all_credential_states()
 
+            # 新增：清理僵尸凭证（内容为空或无效的凭证）
+            try:
+                zombie_credentials = []
+                # 创建一个副本进行迭代，以防在迭代过程中修改列表
+                credential_list_for_check = list(all_credentials_from_storage)
+                for cred_name in credential_list_for_check:
+                    credential_data = await self._storage_adapter.get_credential(cred_name)
+                    # 如果凭证数据为空，或者没有关键字段，则认为是僵尸凭证
+                    if not credential_data or not all(key in credential_data for key in ['client_id', 'refresh_token']):
+                        zombie_credentials.append(cred_name)
+
+                if zombie_credentials:
+                    log.info(f"发现 {len(zombie_credentials)} 个僵尸凭证，将进行清理...")
+                    for cred_name in zombie_credentials:
+                        try:
+                            # 在FileStorageManager中，delete_credential会删除整个部分，同时包括内容和状态
+                            deleted = await self._storage_adapter.delete_credential(cred_name)
+                            if deleted:
+                                log.info(f"已成功清理僵尸凭证 (内容和状态): {cred_name}")
+                            else:
+                                log.warning(f"清理僵尸凭证 {cred_name} 时失败")
+                        except Exception as e:
+                            log.error(f"清理僵尸凭证 {cred_name} 时发生错误: {e}")
+
+                    # 清理后重新获取凭证列表，确保后续逻辑使用最新数据
+                    all_credentials_from_storage = await self._storage_adapter.list_credentials()
+                    log.info("僵尸凭证清理完成，已重新加载凭证列表。")
+
+            except Exception as e:
+                log.error(f"清理僵尸凭证时发生错误: {e}")
+
             # 2. 处理禁用恢复逻辑
             for cred_name in all_credentials_from_storage:
                 state = all_states.get(cred_name, {})
